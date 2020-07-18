@@ -21,6 +21,7 @@ Twinkle.batchundelete = function twinklebatchundelete() {
 	}
 	Twinkle.addPortletLink(Twinkle.batchundelete.callback, 'Und-batch', 'tw-batch-undel', "Undelete 'em all");
 };
+Twinkle.addInitCallback(Twinkle.batchundelete, 'batchundelete');
 
 Twinkle.batchundelete.callback = function twinklebatchundeleteCallback() {
 	var Window = new Morebits.simpleWindow(600, 400);
@@ -98,6 +99,7 @@ Twinkle.batchundelete.callback = function twinklebatchundeleteCallback() {
 		apiobj.params.form.append({
 			type: 'checkbox',
 			name: 'pages',
+			shiftClickSupport: true,
 			list: list
 		});
 		apiobj.params.form.append({ type: 'submit' });
@@ -105,7 +107,6 @@ Twinkle.batchundelete.callback = function twinklebatchundeleteCallback() {
 		var result = apiobj.params.form.render();
 		apiobj.params.Window.setContent(result);
 
-		Morebits.checkboxShiftClickSupport(Morebits.quickForm.getElements(result, 'pages'));
 	}, statelem);
 	wikipedia_api.params = { form: form, Window: Window };
 	wikipedia_api.post();

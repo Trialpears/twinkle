@@ -20,6 +20,7 @@ Twinkle.unlink = function twinkleunlink() {
 	}
 	Twinkle.addPortletLink(Twinkle.unlink.callback, 'Unlink', 'tw-unlink', 'Unlink backlinks');
 };
+Twinkle.addInitCallback(Twinkle.unlink, 'unlink');
 
 // the parameter is used when invoking unlink from admin speedy
 Twinkle.unlink.callback = function(presetReason) {
@@ -179,6 +180,7 @@ Twinkle.unlink.callbacks = {
 					apiobj.params.form.append({
 						type: 'checkbox',
 						name: 'imageusage',
+						shiftClickSupport: true,
 						list: list
 					});
 					havecontent = true;
@@ -225,6 +227,7 @@ Twinkle.unlink.callbacks = {
 				apiobj.params.form.append({
 					type: 'checkbox',
 					name: 'backlinks',
+					shiftClickSupport: true,
 					list: list
 				});
 				havecontent = true;
@@ -239,9 +242,6 @@ Twinkle.unlink.callbacks = {
 			var result = apiobj.params.form.render();
 			apiobj.params.Window.setContent(result);
 
-			Morebits.checkboxShiftClickSupport($("input[name='imageusage']", result));
-			Morebits.checkboxShiftClickSupport($("input[name='backlinks']", result));
-
 		}
 	},
 	unlinkBacklinks: function twinkleunlinkCallbackUnlinkBacklinks(pageobj) {
@@ -254,8 +254,7 @@ Twinkle.unlink.callbacks = {
 
 		// remove image usages
 		if (params.doImageusage) {
-			wikiPage.commentOutImage(mw.config.get('wgTitle'), 'Commented out');
-			text = wikiPage.getText();
+			text = wikiPage.commentOutImage(mw.config.get('wgTitle'), 'Commented out').getText();
 			// did we actually make any changes?
 			if (text === oldtext) {
 				warningString = 'file usages';
@@ -267,8 +266,7 @@ Twinkle.unlink.callbacks = {
 
 		// remove backlinks
 		if (params.doBacklinks) {
-			wikiPage.removeLink(Morebits.pageNameNorm);
-			text = wikiPage.getText();
+			text = wikiPage.removeLink(Morebits.pageNameNorm).getText();
 			// did we actually make any changes?
 			if (text === oldtext) {
 				warningString = warningString ? 'backlinks or file usages' : 'backlinks';

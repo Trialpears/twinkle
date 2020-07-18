@@ -445,6 +445,9 @@ Morebits.quickForm.element.prototype.compute = function QuickFormElementCompute(
 					}
 				}
 			}
+			if (data.shiftClickSupport && data.type === 'checkbox') {
+				Morebits.checkboxShiftClickSupport(Morebits.quickForm.getElements(node, data.name));
+			}
 			break;
 		case 'input':
 			node = document.createElement('div');
@@ -1721,6 +1724,8 @@ Morebits.wiki.api = function(currentAction, query, onSuccess, statusElement, onE
 	}
 	if (!query.format) {
 		this.query.format = 'xml';
+	} else if (query.format === 'json' && !query.formatversion) {
+		this.query.formatversion = '2';
 	} else if (['xml', 'json'].indexOf(query.format) === -1) {
 		this.statelem.error('Invalid API format: only xml and json are supported.');
 	}
@@ -1738,6 +1743,7 @@ Morebits.wiki.api.prototype = {
 	statusText: null, // result received from the API, normally "success" or "error"
 	errorCode: null, // short text error code, if any, as documented in the MediaWiki API
 	errorText: null, // full error description, if any
+	badtokenRetry: false, // set to true if this on a retry attempted after a badtoken error
 
 	/**
 	 * Keep track of parent object for callbacks
@@ -1774,7 +1780,7 @@ Morebits.wiki.api.prototype = {
 
 		var ajaxparams = $.extend({}, {
 			context: this,
-			type: 'POST',
+			type: this.query.action === 'query' ? 'GET' : 'POST',
 			url: mw.util.wikiScript('api'),
 			data: queryString,
 			dataType: this.query.format,
@@ -1798,7 +1804,7 @@ Morebits.wiki.api.prototype = {
 
 				if (typeof this.errorCode === 'string') {
 					// the API didn't like what we told it, e.g., bad edit token or an error creating a page
-					return this.returnError();
+					return this.returnError(callerAjaxParameters);
 				}
 
 				// invoke success callback if one was supplied
@@ -1826,13 +1832,19 @@ Morebits.wiki.api.prototype = {
 		);
 	},
 
-	returnError: function() {
-		if (this.errorCode === 'badtoken') {
-			// TODO: automatically retry after getting a new token
-			this.statelem.error('Invalid token. Refresh the page and try again');
-		} else {
-			this.statelem.error(this.errorText);
+	returnError: function(callerAjaxParameters) {
+		if (this.errorCode === 'badtoken' && !this.badtokenRetry) {
+			this.statelem.warn('Invalid token. Getting a new token and retrying...');
+			this.badtokenRetry = true;
+			// Get a new CSRF token and retry. If the original action needs a different
+			// type of action than CSRF, we do one pointless retry before bailing out
+			return Morebits.wiki.api.getToken().then(function(token) {
+				this.query.token = token;
+				return this.post(callerAjaxParameters);
+			});
 		}
+
+		this.statelem.error(this.errorText);
 
 		// invoke failure callback if one was supplied
 		if (this.onError) {
@@ -1880,6 +1892,17 @@ Morebits.wiki.api.setApiUserAgent = function(ua) {
 	morebitsWikiApiUserAgent = (ua ? ua + ' ' : '') + 'morebits.js ([[w:WT:TW]])';
 };
 
+/** Get a new CSRF token on encountering token errors */
+Morebits.wiki.api.getToken = function() {
+	var tokenApi = new Morebits.wiki.api('Getting token', {
+		action: 'query',
+		meta: 'tokens',
+		type: 'csrf'
+	});
+	return tokenApi.post().then(function(apiobj) {
+		return $(apiobj.responseXML).find('tokens').attr('csrftoken');
+	});
+};
 
 
 /**
@@ -3118,17 +3141,6 @@ Morebits.wiki.page = function(pageName, currentAction) {
 		return true; // all OK
 	};
 
-	// helper function to get a new token on encountering token errors in save, deletePage, and undeletePage
-	var fnGetToken = function() {
-		var tokenApi = new Morebits.wiki.api('Getting token', {
-			action: 'query',
-			meta: 'tokens'
-		});
-		return tokenApi.post().then(function(apiobj) {
-			return $(apiobj.responseXML).find('tokens').attr('csrftoken');
-		});
-	};
-
 	// callback from saveApi.post()
 	var fnSaveSuccess = function() {
 		ctx.editMode = 'all';  // cancel append/prepend/revert modes
@@ -3187,16 +3199,6 @@ Morebits.wiki.page = function(pageName, currentAction) {
 				}
 			}, ctx.statusElement);
 			purgeApi.post();
-
-		// check for loss of edit token
-		} else if (errorCode === 'badtoken' && ctx.retries++ < ctx.maxRetries) {
-
-			ctx.statusElement.info('Edit token is invalid, retrying');
-			--Morebits.wiki.numberOfActionsLeft;  // allow for normal completion if retry succeeds
-			fnGetToken().then(function(token) {
-				ctx.saveApi.query.token = token;
-				ctx.saveApi.post();
-			});
 
 		// check for network or server error
 		} else if (errorCode === 'undefined' && ctx.retries++ < ctx.maxRetries) {
@@ -3501,13 +3503,7 @@ Morebits.wiki.page = function(pageName, currentAction) {
 			ctx.statusElement.info('Database query error, retrying');
 			--Morebits.wiki.numberOfActionsLeft;  // allow for normal completion if retry succeeds
 			ctx.deleteProcessApi.post(); // give it another go!
-		} else if (errorCode === 'badtoken' && ctx.retries++ < ctx.maxRetries) {
-			ctx.statusElement.info('Invalid token, retrying');
-			--Morebits.wiki.numberOfActionsLeft;
-			fnGetToken().then(function(token) {
-				ctx.deleteProcessApi.query.token = token;
-				ctx.deleteProcessApi.post();
-			});
+
 		} else if (errorCode === 'missingtitle') {
 			ctx.statusElement.error('Cannot delete the page, because it no longer exists');
 			if (ctx.onDeleteFailure) {
@@ -3581,13 +3577,6 @@ Morebits.wiki.page = function(pageName, currentAction) {
 			ctx.statusElement.info('Database query error, retrying');
 			--Morebits.wiki.numberOfActionsLeft;  // allow for normal completion if retry succeeds
 			ctx.undeleteProcessApi.post(); // give it another go!
-		} else if (errorCode === 'badtoken' && ctx.retries++ < ctx.maxRetries) {
-			ctx.statusElement.info('Invalid token, retrying');
-			--Morebits.wiki.numberOfActionsLeft;
-			fnGetToken().then(function(token) {
-				ctx.undeleteProcessApi.query.token = token;
-				ctx.undeleteProcessApi.post();
-			});
 		} else if (errorCode === 'cantundelete') {
 			ctx.statusElement.error('Cannot undelete the page, either because there are no revisions to undelete or because it has already been undeleted');
 			if (ctx.onUndeleteFailure) {
@@ -3908,6 +3897,8 @@ Morebits.wikitext.page.prototype = {
 	/**
 	 * Removes links to `link_target` from the page text.
 	 * @param {string} link_target
+	 *
+	 * @returns {Morebits.wikitext.page}
 	 */
 	removeLink: function(link_target) {
 		var first_char = link_target.substr(0, 1);
@@ -3921,6 +3912,7 @@ Morebits.wikitext.page.prototype = {
 		var link_simple_re = new RegExp('\\[\\[' + colon + '(' + link_re_string + ')\\]\\]', 'g');
 		var link_named_re = new RegExp('\\[\\[' + colon + link_re_string + '\\|(.+?)\\]\\]', 'g');
 		this.text = this.text.replace(link_simple_re, '$1').replace(link_named_re, '$1');
+		return this;
 	},
 
 	/**
@@ -3928,6 +3920,8 @@ Morebits.wikitext.page.prototype = {
 	 * If used as a template argument (not necessarily with File: prefix), the template parameter is commented out.
 	 * @param {string} image - Image name without File: prefix
 	 * @param {string} reason - Reason to be included in comment, alongside the commented-out image
+	 *
+	 * @returns {Morebits.wikitext.page}
 	 */
 	commentOutImage: function(image, reason) {
 		var unbinder = new Morebits.unbinder(this.text);
@@ -3965,12 +3959,15 @@ Morebits.wikitext.page.prototype = {
 		unbinder.content = unbinder.content.replace(free_image_re, '<!-- ' + reason + '$1 -->');
 		// Rebind the content now, we are done!
 		this.text = unbinder.rebind();
+		return this;
 	},
 
 	/**
 	 * Converts first usage of [[File:`image`]] to [[File:`image`|`data`]]
 	 * @param {string} image - Image name without File: prefix
 	 * @param {string} data
+	 *
+	 * @returns {Morebits.wikitext.page}
 	 */
 	addToImageComment: function(image, data) {
 		var first_char = image.substr(0, 1);
@@ -3992,12 +3989,15 @@ Morebits.wikitext.page.prototype = {
 		var gallery_re = new RegExp('^(\\s*' + image_re_string + '.*?)\\|?(.*?)$', 'mg');
 		var newtext = '$1|$2 ' + data;
 		this.text = this.text.replace(gallery_re, newtext);
+		return this;
 	},
 
 	/**
 	 * Removes transclusions of template from page text
 	 * @param {string} template - Page name whose transclusions are to be removed,
 	 * include namespace prefix only if not in template namespace
+	 *
+	 * @returns {Morebits.wikitext.page}
 	 */
 	removeTemplate: function(template) {
 		var first_char = template.substr(0, 1);
@@ -4009,6 +4009,73 @@ Morebits.wikitext.page.prototype = {
 				this.text = this.text.replace(allTemplates[i], '', 'g');
 			}
 		}
+		return this;
+	},
+
+	/**
+	 * Smartly insert a tag atop page text but after specified templates,
+	 * such as hatnotes, short description, or deletion and protection templates.
+	 * Notably, does *not* insert a newline after the tag
+	 *
+	 * @param {string} tag - The tag to be inserted
+	 * @param {string|string[]} regex - Templates after which to insert tag,
+	 * given as either as a (regex-valid) string or an array to be joined by pipes
+	 * @param {string} [flags=i] - Regex flags to apply. Optional, defaults to /i
+	 * @param {string|string[]} preRegex - Optional regex string or array to match
+	 * before any template matches (i.e. before `{{`), such as html comments
+	 *
+	 * @returns {Morebits.wikitext.page}
+	 */
+	insertAfterTemplates: function(tag, regex, flags, preRegex) {
+		if (!tag) {
+			throw new Error('No tag provided');
+		}
+
+		// .length is only a property of strings and arrays so we
+		// shouldn't need to check type
+		if (!regex || !regex.length) {
+			throw new Error('No regex provided');
+		} else if (Array.isArray(regex)) {
+			regex = regex.join('|');
+		}
+
+		flags = flags || 'i';
+
+		if (!preRegex || !preRegex.length) {
+			preRegex = '';
+		} else if (Array.isArray(preRegex)) {
+			preRegex = preRegex.join('|');
+		}
+
+
+		// Regex is extra complicated to allow for templates with
+		// parameters and to handle whitespace properly
+		this.text = this.text.replace(
+			new RegExp(
+				// leading whitespace
+				'^\\s*' +
+				// capture template(s)
+				'(?:((?:\\s*' +
+				// Pre-template regex, such as leading html comments
+				preRegex + '|' +
+				// begin template format
+				'\\{\\{\\s*(?:' +
+				// Template regex
+				regex +
+				// end main template name, optionally with a number
+				// Probably remove the (?:) though
+				')\\d*\\s*' +
+				// template parameters
+				'(\\|(?:\\{\\{[^{}]*\\}\\}|[^{}])*)?' +
+				// end template format
+				'\\}\\})+' +
+				// end capture
+				'(?:\\s*\\n)?)' +
+				// trailing whitespace
+				'\\s*)?',
+				flags), '$1' + tag
+		);
+		return this;
 	},
 
 	/** @returns {string} */
@@ -4228,7 +4295,7 @@ Morebits.status.error = function(text, status) {
  */
 Morebits.status.actionCompleted = function(text) {
 	var node = document.createElement('div');
-	node.appendChild(document.createElement('span')).appendChild(document.createTextNode(text));
+	node.appendChild(document.createElement('b')).appendChild(document.createTextNode(text));
 	node.className = 'morebits_status_info';
 	if (Morebits.status.root) {
 		Morebits.status.root.appendChild(node);

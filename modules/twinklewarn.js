@@ -45,6 +45,7 @@ Twinkle.warn = function twinklewarn() {
 		}
 	}
 };
+Twinkle.addInitCallback(Twinkle.warn, 'warn');
 
 // Used to close window when switching to ARV in autolevel
 Twinkle.warn.dialog = null;
@@ -73,10 +74,12 @@ Twinkle.warn.callback = function twinklewarnCallback() {
 	var main_group = main_select.append({
 		type: 'select',
 		name: 'main_group',
+		tooltip: 'You can customize the default selection in your Twinkle preferences',
 		event: Twinkle.warn.callback.change_category
 	});
 
 	var defaultGroup = parseInt(Twinkle.getPref('defaultWarningGroup'), 10);
+	main_group.append({ type: 'option', label: 'Auto-select level (1-4)', value: 'autolevel', selected: defaultGroup === 11 });
 	main_group.append({ type: 'option', label: '1: General note', value: 'level1', selected: defaultGroup === 1 });
 	main_group.append({ type: 'option', label: '2: Caution', value: 'level2', selected: defaultGroup === 2 });
 	main_group.append({ type: 'option', label: '3: Warning', value: 'level3', selected: defaultGroup === 3 });
@@ -92,7 +95,6 @@ Twinkle.warn.callback = function twinklewarnCallback() {
 		main_group.append({ type: 'option', label: 'Custom warnings', value: 'custom', selected: defaultGroup === 9 });
 	}
 	main_group.append({ type: 'option', label: 'All warning templates', value: 'kitchensink', selected: defaultGroup === 10 });
-	main_group.append({ type: 'option', label: 'Auto-select level (1-4)', value: 'autolevel', selected: defaultGroup === 11 });
 
 	main_select.append({ type: 'select', name: 'sub_group', event: Twinkle.warn.callback.change_subcategory }); // Will be empty to begin with.
 
@@ -1332,7 +1334,7 @@ Twinkle.warn.callback.postCategoryCleanup = function twinklewarnCallbackPostCate
 			})
 			.change(Twinkle.warn.callback.change_subcategory);
 
-		$('.select2-selection').keydown(Morebits.select2.autoStart);
+		$('.select2-selection').keydown(Morebits.select2.autoStart).focus();
 
 		mw.util.addCSS(
 			// Increase height
@@ -1522,15 +1524,13 @@ Twinkle.warn.callbacks = {
 	* @returns {Array} - Array that contains the full template and just the warning level
 	*/
 	autolevelParseWikitext: function(wikitext, params, latest, date, statelem) {
-		var template = params.sub_group.replace(/(.*)\d$/, '$1');
-
 		var level; // undefined rather than '' means the isNaN below will return true
 		if (/\d(?:im)?$/.test(latest.type)) { // level1-4im
 			level = parseInt(latest.type.replace(/.*(\d)(?:im)?$/, '$1'), 10);
 		} else if (latest.type) { // Non-numbered warning
 			// Try to leverage existing categorization of
 			// warnings, all but one are universally lowercased
-			var loweredType = /uw-multipleIPs/i.test(template) ? 'uw-multipleIPs' : template.toLowerCase();
+			var loweredType = /uw-multipleIPs/i.test(latest.type) ? 'uw-multipleIPs' : latest.type.toLowerCase();
 			// It would be nice to account for blocks, but in most
 			// cases the hidden message is terminal, not the sig
 			if (Twinkle.warn.messages.singlewarn[loweredType]) {
@@ -1588,6 +1588,12 @@ Twinkle.warn.callbacks = {
 			}
 		}
 
+		$autolevelMessage.prepend($('<div>Will issue a <span style="font-weight: bold;">level ' + level + '</span> template.</div>'));
+		// Place after the stale and other-user-reverted (text-only) messages
+		$('#twinkle-warn-autolevel-message').remove(); // clean slate
+		$autolevelMessage.insertAfter($('#twinkle-warn-warning-messages'));
+
+		var template = params.sub_group.replace(/(.*)\d$/, '$1');
 		// Validate warning level, falling back to the uw-generic series.
 		// Only a few items are missing a level, and in all but a handful
 		// of cases, the uw-generic series is explicitly used elsewhere per WP:UTM.
@@ -1595,11 +1601,6 @@ Twinkle.warn.callbacks = {
 			template = 'uw-generic';
 		}
 		template += level;
-
-		$autolevelMessage.prepend($('<div>Will issue a <span style="font-weight: bold;">level ' + level + '</span> template.</div>'));
-		// Place after the stale and other-user-reverted (text-only) messages
-		$('#twinkle-warn-autolevel-message').remove(); // clean slate
-		$autolevelMessage.insertAfter($('#twinkle-warn-warning-messages'));
 
 		return [template, level];
 	},
@@ -1675,33 +1676,39 @@ Twinkle.warn.callbacks = {
 		}
 
 		// build the edit summary
-		var summary;
-		if (params.main_group === 'custom') {
-			switch (params.sub_group.substr(-1)) {
+		// Function to handle generation of summary prefix for custom templates
+		var customProcess = function(template) {
+			template = template.split('|')[0];
+			var prefix;
+			switch (template.substr(-1)) {
 				case '1':
-					summary = 'General note';
+					prefix = 'General note';
 					break;
 				case '2':
-					summary = 'Caution';
+					prefix = 'Caution';
 					break;
 				case '3':
-					summary = 'Warning';
+					prefix = 'Warning';
 					break;
 				case '4':
-					summary = 'Final warning';
+					prefix = 'Final warning';
 					break;
 				case 'm':
-					if (params.sub_group.substr(-3) === '4im') {
-						summary = 'Only warning';
+					if (template.substr(-3) === '4im') {
+						prefix = 'Only warning';
 						break;
 					}
-					summary = 'Notice';
-					break;
+					// falls through
 				default:
-					summary = 'Notice';
+					prefix = 'Notice';
 					break;
 			}
-			summary += ': ' + Morebits.string.toUpperCaseFirstChar(messageData.label);
+			return prefix + ': ' + Morebits.string.toUpperCaseFirstChar(messageData.label);
+		};
+
+		var summary;
+		if (params.main_group === 'custom') {
+			summary = customProcess(params.sub_group);
 		} else {
 			// Normalize kitchensink to the 1-4im style
 			if (params.main_group === 'kitchensink' && !/^D+$/.test(params.sub_group)) {
@@ -1714,7 +1721,12 @@ Twinkle.warn.callbacks = {
 					params.main_group = 'level' + sub;
 				}
 			}
-			summary = /^\D+$/.test(params.main_group) ? messageData.summary : messageData[params.main_group].summary;
+			// singlet || level1-4im, no need to /^\D+$/.test(params.main_group)
+			summary = messageData.summary || (messageData[params.main_group] && messageData[params.main_group].summary);
+			// Not in Twinkle.warn.messages, assume custom template
+			if (!summary) {
+				summary = customProcess(params.sub_group);
+			}
 			if (messageData.suppressArticleInSummary !== true && params.article) {
 				if (params.sub_group === 'uw-agf-sock' ||
 						params.sub_group === 'uw-socksuspect' ||

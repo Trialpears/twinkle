@@ -27,10 +27,24 @@ if (!Morebits.userIsInGroup('autoconfirmed') && !Morebits.userIsInGroup('confirm
 var Twinkle = {};
 window.Twinkle = Twinkle;  // allow global access
 
-// for use by custom modules (normally empty)
+/**
+ * Twinkle-specific data shared by multiple modules
+ * Likely customized per installation
+ */
+// Various hatnote templates, used when tagging (csd/xfd/tag/prod/protect) to
+// ensure MOS:ORDER
+Twinkle.hatnoteRegex = 'short description|hatnote|main|correct title|dablink|distinguish|for|further|selfref|year dab|similar names|highway detail hatnote|broader|about(?:-distinguish| other people)?|other\\s?(?:hurricane(?: use)?s|people|persons|places|ships|uses(?: of)?)|redirect(?:-(?:distinguish|synonym|multi))?|see\\s?(?:wiktionary|also(?: if exists)?)';
+
+
 Twinkle.initCallbacks = [];
-Twinkle.addInitCallback = function twinkleAddInitCallback(func) {
-	Twinkle.initCallbacks.push(func);
+/**
+ * Adds a callback to execute when Twinkle has loaded.
+ * @param {function} func
+ * @param {string} [name] - name of module used to check if is disabled.
+ * If name is not given, module is loaded unconditionally.
+ */
+Twinkle.addInitCallback = function twinkleAddInitCallback(func, name) {
+	Twinkle.initCallbacks.push({ func: func, name: name });
 };
 
 Twinkle.defaultConfig = {};
@@ -88,9 +102,9 @@ Twinkle.defaultConfig = {
 	markSpeedyPagesAsPatrolled: false,
 
 	// these next two should probably be identical by default
-	welcomeUserOnSpeedyDeletionNotification: [ 'db', 'g1', 'g2', 'g3', 'g4', 'g6', 'g10', 'g11', 'g12', 'g13', 'g14', 'a1', 'a2', 'a3', 'a5', 'a7', 'a9', 'a10', 'a11', 'f1', 'f2', 'f3', 'f7', 'f9', 'f10', 'u3', 'u5', 't2', 't3', 'p1', 'p2' ],
-	notifyUserOnSpeedyDeletionNomination: [ 'db', 'g1', 'g2', 'g3', 'g4', 'g6', 'g10', 'g11', 'g12', 'g13', 'g14', 'a1', 'a2', 'a3', 'a5', 'a7', 'a9', 'a10', 'a11', 'f1', 'f2', 'f3', 'f7', 'f9', 'f10', 'u3', 'u5', 't2', 't3', 'p1', 'p2' ],
-	warnUserOnSpeedyDelete: [ 'db', 'g1', 'g2', 'g3', 'g4', 'g6', 'g10', 'g11', 'g12', 'g13', 'g14', 'a1', 'a2', 'a3', 'a5', 'a7', 'a9', 'a10', 'a11', 'f1', 'f2', 'f3', 'f7', 'f9', 'f10', 'u3', 'u5', 't2', 't3', 'p1', 'p2' ],
+	welcomeUserOnSpeedyDeletionNotification: [ 'db', 'g1', 'g2', 'g3', 'g4', 'g6', 'g10', 'g11', 'g12', 'g13', 'g14', 'a1', 'a2', 'a3', 'a5', 'a7', 'a9', 'a10', 'a11', 'f1', 'f2', 'f3', 'f7', 'f9', 'f10', 'u3', 'u5', 't3', 'p1', 'p2' ],
+	notifyUserOnSpeedyDeletionNomination: [ 'db', 'g1', 'g2', 'g3', 'g4', 'g6', 'g10', 'g11', 'g12', 'g13', 'g14', 'a1', 'a2', 'a3', 'a5', 'a7', 'a9', 'a10', 'a11', 'f1', 'f2', 'f3', 'f7', 'f9', 'f10', 'u3', 'u5', 't3', 'p1', 'p2' ],
+	warnUserOnSpeedyDelete: [ 'db', 'g1', 'g2', 'g3', 'g4', 'g6', 'g10', 'g11', 'g12', 'g13', 'g14', 'a1', 'a2', 'a3', 'a5', 'a7', 'a9', 'a10', 'a11', 'f1', 'f2', 'f3', 'f7', 'f9', 'f10', 'u3', 'u5', 't3', 'p1', 'p2' ],
 	promptForSpeedyDeletionSummary: [],
 	deleteTalkPageOnDelete: true,
 	deleteRedirectsOnDelete: true,
@@ -446,33 +460,19 @@ Twinkle.load = function () {
 	// Set custom Api-User-Agent header, for server-side logging purposes
 	Morebits.wiki.api.setApiUserAgent('Twinkle (' + mw.config.get('wgWikiID') + ')');
 
-	// Load all the modules in the order that the tabs should appear
-	var twinkleModules = [
-		// User/user talk-related
-		'arv', 'warn', 'block', 'welcome', 'shared', 'talkback',
-		// Deletion
-		'speedy', 'prod', 'xfd', 'image',
-		// Maintenance
-		'protect', 'tag',
-		// Misc. ones last
-		'diff', 'unlink', 'fluff', 'deprod', 'batchdelete', 'batchprotect', 'batchundelete'
-	];
-	// Don't load modules users have disabled
-	var disabledModules = Twinkle.getPref('disabledModules').concat(Twinkle.getPref('disabledSysopModules'));
-	twinkleModules.filter(function(mod) {
-		return disabledModules.indexOf(mod) === -1;
-	}).forEach(function(module) {
-		Twinkle[module]();
-	});
-	Twinkle.config.init(); // Can't turn off
+	Twinkle.disabledModules = Twinkle.getPref('disabledModules').concat(Twinkle.getPref('disabledSysopModules'));
 
-	// Run the initialization callbacks for any custom modules
-	Twinkle.initCallbacks.forEach(function (func) {
-		func();
-	});
-	Twinkle.addInitCallback = function (func) {
-		func();
+	// Redefine addInitCallback so that any modules being loaded now on are directly
+	// initialised rather than added to initCallbacks array
+	Twinkle.addInitCallback = function(func, name) {
+		if (!name || Twinkle.disabledModules.indexOf(name) === -1) {
+			func();
+		}
 	};
+	// Initialise modules that were saved in initCallbacks array
+	Twinkle.initCallbacks.forEach(function(module) {
+		Twinkle.addInitCallback(module.func, module.name);
+	});
 
 	// Increases text size in Twinkle dialogs, if so configured
 	if (Twinkle.getPref('dialogLargeFont')) {

@@ -21,6 +21,7 @@ Twinkle.batchprotect = function twinklebatchprotect() {
 		Twinkle.addPortletLink(Twinkle.batchprotect.callback, 'P-batch', 'tw-pbatch', 'Protect pages linked from this page');
 	}
 };
+Twinkle.addInitCallback(Twinkle.batchprotect, 'batchprotect');
 
 Twinkle.batchprotect.unlinkCache = {};
 Twinkle.batchprotect.callback = function twinklebatchprotectCallback() {
@@ -345,6 +346,7 @@ Twinkle.batchprotect.callback = function twinklebatchprotectCallback() {
 		form.append({
 			type: 'checkbox',
 			name: 'pages',
+			shiftClickSupport: true,
 			list: list
 		});
 		form.append({ type: 'submit' });
@@ -352,7 +354,6 @@ Twinkle.batchprotect.callback = function twinklebatchprotectCallback() {
 		var result = form.render();
 		Window.setContent(result);
 
-		Morebits.checkboxShiftClickSupport(Morebits.quickForm.getElements(result, 'pages'));
 	}, statelem);
 
 	wikipedia_api.post();
